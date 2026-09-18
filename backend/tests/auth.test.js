@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
+import { ensureServer } from './testHelper.js';
 dotenv.config();
 
 const API_BASE = 'http://localhost:5000';
@@ -30,6 +31,7 @@ async function request(path, options = {}) {
 }
 
 async function runTests() {
+  await ensureServer();
   console.log('=== Starting Auth + Roles Test Suite ===\n');
   let passed = 0;
   let failed = 0;
@@ -168,6 +170,7 @@ async function runTests() {
 
     console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
     if (failed > 0) process.exit(1);
+    process.exit(0);
   } catch (err) {
     console.error('Test execution failed:', err);
     process.exit(1);

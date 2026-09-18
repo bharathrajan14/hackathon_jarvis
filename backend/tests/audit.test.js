@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { ensureServer } from './testHelper.js';
 dotenv.config();
 
 const API_BASE = 'http://localhost:5000';
@@ -46,6 +47,7 @@ async function registerAndLogin(name, email, password, role) {
 }
 
 async function runAuditTests() {
+  await ensureServer();
   console.log('=== Starting Audit Logging + Wiring Test Suite ===\n');
   let passed = 0;
   let failed = 0;
@@ -186,6 +188,7 @@ async function runAuditTests() {
 
     console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
     if (failed > 0) process.exit(1);
+    process.exit(0);
   } catch (err) {
     console.error('Audit logging test failed:', err);
     process.exit(1);
