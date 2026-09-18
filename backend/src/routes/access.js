@@ -1,6 +1,8 @@
 import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { query } from '../db/index.js';
+import { calculateRisk } from '../logic/riskEngine.js';
+import { decideAction } from '../logic/policyEngine.js';
 
 const router = express.Router();
 
@@ -60,8 +62,46 @@ router.post('/request', requireAuth, async (req, res) => {
       });
     }
 
-    // Return context capture response
+    // 1. Calculate Risk with resolved context
+    const riskResult = calculateRisk({
+      network,
+      location,
+      deviceTrust: device.trust_level,
+      resourceSensitivity: resource.sensitivity,
+    });
+
+    // 2. Decide Policy Action based on riskBand, user role, and resource sensitivity
+    const action = decideAction({
+      riskBand: riskResult.band,
+      role: req.user.role,
+      resourceSensitivity: resource.sensitivity,
+    });
+
+    // 3. Insert audit log record into access_requests table
+    await query(
+      `INSERT INTO access_requests (
+         user_id, resource_id, device_id, network, location,
+         risk_score, risk_band, policy_action, factors_json
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        req.user.id,
+        resource.id,
+        device.id,
+        network,
+        location,
+        riskResult.score,
+        riskResult.band,
+        action,
+        JSON.stringify(riskResult.factors),
+      ]
+    );
+
+    // 4. Return evaluated risk and action to the client
     return res.json({
+      riskScore: riskResult.score,
+      riskBand: riskResult.band,
+      factors: riskResult.factors,
+      action,
       network,
       location,
       deviceTrust: device.trust_level,

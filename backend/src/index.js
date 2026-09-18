@@ -6,6 +6,7 @@ import authRouter from './routes/auth.js';
 import resourcesRouter from './routes/resources.js';
 import devicesRouter from './routes/devices.js';
 import accessRouter from './routes/access.js';
+import auditRouter from './routes/audit.js';
 import { requireAuth } from './middleware/auth.js';
 
 dotenv.config();
@@ -22,6 +23,7 @@ app.use('/auth', authRouter);
 app.use('/resources', resourcesRouter);
 app.use('/devices', devicesRouter);
 app.use('/access', accessRouter);
+app.use('/audit-logs', auditRouter);
 
 // Dummy protected route for auth middleware verification
 app.get('/dummy-protected', requireAuth, (req, res) => {
