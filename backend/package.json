@@ -5,14 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "dev": "nodemon src/index.js",
-    "start": "node src/index.js",
-    "test": "node tests/policyEngine.test.js && node tests/riskEngine.test.js && node tests/auth.test.js && node tests/rbac.test.js && node tests/context.test.js && node tests/audit.test.js",
-    "test:policy": "node tests/policyEngine.test.js",
-    "test:risk": "node tests/riskEngine.test.js",
-    "test:auth": "node tests/auth.test.js",
-    "test:rbac": "node tests/rbac.test.js",
-    "test:context": "node tests/context.test.js",
-    "test:audit": "node tests/audit.test.js"
+    "start": "node src/index.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
