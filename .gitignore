@@ -1,0 +1,8 @@
+node_modules/
+.env
+dist/
+dist-ssr/
+*.local
+.system_generated/
+.DS_Store
+Thumbs.db
