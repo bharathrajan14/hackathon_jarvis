@@ -1,166 +1,129 @@
-const NETWORK_POINTS = {
-  office: 0,
-  public: 15,
-  unknown: 25,
-};
+import { evaluateContext } from '../src/engines/contextEngine.js';
+import { evaluateBehavior, getOrCreateProfile } from '../src/engines/behaviorEngine.js';
 
-const LOCATION_POINTS = {
-  office: 0,
-  near: 10,
-  far: 20,
-};
-
-const DEVICE_TRUST_POINTS = {
-  trusted: 0,
-  unknown: 20,
-  untrusted: 30,
-};
-
-const SENSITIVITY_POINTS = {
-  low: 0,
-  medium: 10,
-  high: 20,
-};
-
-const TIME_OF_DAY_POINTS = {
-  normal: 0,
-  office_hours: 0,
-  day: 0,
-  unusual: 10,
-  after_hours: 10,
-  night: 20,
-  critical: 20,
-};
-
-const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:8000/anomaly-score';
+const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://127.0.0.1:8000/anomaly-score';
 
 /**
- * Maps numeric score to risk band.
+ * Maps numeric risk score (0-100) to standardized Risk Level
  * @param {number} score
- * @returns {'Low'|'Medium'|'High'|'Critical'}
+ * @returns {'LOW'|'MEDIUM'|'HIGH'|'CRITICAL'}
  */
 export function scoreToBand(score) {
-  if (score >= 75) return 'Critical';
-  if (score >= 55) return 'High';
-  if (score >= 30) return 'Medium';
-  return 'Low';
+  const num = Math.round(score);
+  if (num >= 81) return 'CRITICAL';
+  if (num >= 61) return 'HIGH';
+  if (num >= 31) return 'MEDIUM';
+  return 'LOW';
 }
 
 /**
- * Pure function to calculate risk score, band, and factor breakdown.
- * No imports of db, express, or any I/O. Standalone with no side effects.
- *
- * @param {'LOGIN'|'ACCESS'|Object} evaluationTypeOrParams - Evaluation mode ('LOGIN' or 'ACCESS') or params object for backward compatibility
- * @param {Object} [paramsObj] - Context parameters if evaluationType was specified
- * @returns {{ score: number, band: string, factors: Array<{ name: string, value: string, points: number }> }}
+ * Synchronous core risk calculation (pure deterministic fallback)
+ * @param {'LOGIN'|'ACCESS'|string} evaluationType
+ * @param {Object} params
+ * @returns {{ score: number, level: string, band: string, factors: Array, contextScore: number, behaviorScore: number }}
  */
-export function calculateRisk(evaluationTypeOrParams, paramsObj) {
-  let evaluationType = 'ACCESS';
-  let params = {};
-
-  if (typeof evaluationTypeOrParams === 'string') {
-    evaluationType = evaluationTypeOrParams.toUpperCase();
-    params = paramsObj || {};
-  } else if (typeof evaluationTypeOrParams === 'object' && evaluationTypeOrParams !== null) {
-    evaluationType = 'ACCESS';
-    params = evaluationTypeOrParams;
+export function calculateRisk(evaluationType = 'ACCESS', params = {}) {
+  // Normalize params if passed as single object
+  let options = params;
+  if (typeof evaluationType === 'object' && evaluationType !== null) {
+    options = evaluationType;
   }
 
-  const network = params.network ?? 'unknown';
-  const location = params.location ?? 'far';
-  const deviceTrust = params.deviceTrust ?? params.device ?? 'unknown';
+  const userId = options.userId || options.user_id || 'default';
+  const contextRes = evaluateContext(options);
+  const behaviorRes = evaluateBehavior(userId, options);
 
-  const networkPts = NETWORK_POINTS[network] ?? 25;
-  const locationPts = LOCATION_POINTS[location] ?? 20;
-  const deviceTrustPts = DEVICE_TRUST_POINTS[deviceTrust] ?? 30;
+  let rawScore = 0;
+  const factors = [];
 
-  if (evaluationType === 'LOGIN') {
-    // For LOGIN, use only network/location/device/time-of-day factors (no resourceSensitivity)
-    const timeOfDay = params.timeOfDay ?? params['time-of-day'] ?? 'normal';
-    const timeOfDayPts = TIME_OF_DAY_POINTS[timeOfDay] ?? 0;
+  // 1. Context Factors (device, network, location, time)
+  contextRes.factors.forEach((f) => {
+    if (f.points > 0) {
+      factors.push(f);
+      rawScore += f.points;
+    }
+  });
 
-    const score = networkPts + locationPts + deviceTrustPts + timeOfDayPts;
-    const band = scoreToBand(score);
-
-    const factors = [
-      { name: 'network', value: network, points: networkPts },
-      { name: 'location', value: location, points: locationPts },
-      { name: 'deviceTrust', value: deviceTrust, points: deviceTrustPts },
-      { name: 'timeOfDay', value: timeOfDay, points: timeOfDayPts },
-    ];
-
-    return {
-      score,
-      band,
-      factors,
-    };
+  // 2. Action & Resource Sensitivity (for ACCESS evaluation)
+  if (evaluationType !== 'LOGIN') {
+    if (contextRes.actionPoints > 0) {
+      rawScore += contextRes.actionPoints;
+    }
   }
 
-  // ACCESS evaluation (full feature set with resourceSensitivity)
-  const resourceSensitivity = params.resourceSensitivity ?? 'high';
-  const sensitivityPts = SENSITIVITY_POINTS[resourceSensitivity] ?? 20;
+  // 3. Behavioral Factors
+  behaviorRes.factors.forEach((f) => {
+    factors.push(f);
+    rawScore += f.points;
+  });
 
-  // Factor in prior session risk if provided
-  let priorRiskPts = 0;
-  const hasPriorRisk = params.priorRisk !== undefined && params.priorRisk !== null;
-  const priorRisk = hasPriorRisk ? Number(params.priorRisk) || 0 : 0;
-  if (hasPriorRisk) {
-    priorRiskPts = Math.min(25, Math.round(priorRisk * 0.5));
+  // 4. Session Prior Risk influence (momentum)
+  const priorRisk = Number(options.priorRisk || options.currentRisk || 0);
+  if (priorRisk > 25) {
+    const momentumPts = Math.min(20, Math.round((priorRisk - 20) * 0.35));
+    if (momentumPts > 0) {
+      factors.push({
+        name: 'Prior Session Risk',
+        value: `${priorRisk}/100`,
+        points: momentumPts,
+      });
+      rawScore += momentumPts;
+    }
   }
 
-  const score = Math.min(100, networkPts + locationPts + deviceTrustPts + sensitivityPts + priorRiskPts);
-  const band = scoreToBand(score);
-
-  const factors = [
-    { name: 'network', value: network, points: networkPts },
-    { name: 'location', value: location, points: locationPts },
-    { name: 'deviceTrust', value: deviceTrust, points: deviceTrustPts },
-    { name: 'resourceSensitivity', value: resourceSensitivity, points: sensitivityPts },
-  ];
-
-  if (hasPriorRisk) {
-    factors.push({ name: 'priorRisk', value: String(priorRisk), points: priorRiskPts });
+  // Baseline safe floor for clean enterprise session
+  if (rawScore < 15 && evaluationType !== 'LOGIN') {
+    rawScore = 18; // Default normal operational risk (Alice baseline ~18-24)
   }
+
+  const finalScore = Math.min(100, Math.max(0, Math.round(rawScore)));
+  const level = scoreToBand(finalScore);
 
   return {
-    score,
-    band,
+    score: finalScore,
+    level,
+    band: level, // alias for backwards compatibility
     factors,
+    contextScore: contextRes.contextScore,
+    behaviorScore: behaviorRes.behaviorScore,
   };
 }
 
 /**
- * Async wrapper that calls the ML Anomaly service and blends behaviorAnomaly (0-30 pts)
- * into the factor sum for both LOGIN and ACCESS evaluation types.
- *
- * @param {'LOGIN'|'ACCESS'|Object} evaluationTypeOrParams
- * @param {Object} [paramsObj]
- * @returns {Promise<{ score: number, band: string, factors: Array<{ name: string, value: string, points: number }> }>}
+ * Async Risk Engine with live AI Anomaly Model integration
+ * @param {'LOGIN'|'ACCESS'|string} evaluationType
+ * @param {Object} params
+ * @returns {Promise<{ score: number, level: string, band: string, factors: Array, anomalyScore: number, aiExplanation: string }>}
  */
-export async function calculateRiskAsync(evaluationTypeOrParams, paramsObj) {
-  const baseResult = calculateRisk(evaluationTypeOrParams, paramsObj);
-
-  let params = {};
-  if (typeof evaluationTypeOrParams === 'string') {
-    params = paramsObj || {};
-  } else if (typeof evaluationTypeOrParams === 'object' && evaluationTypeOrParams !== null) {
-    params = evaluationTypeOrParams;
+export async function calculateRiskAsync(evaluationType = 'ACCESS', params = {}) {
+  let options = params;
+  if (typeof evaluationType === 'object' && evaluationType !== null) {
+    options = evaluationType;
   }
 
+  const baseResult = calculateRisk(evaluationType, options);
   let anomalyScore = 0;
+  let aiLevel = 'NORMAL';
+  let aiExplanation = 'Consistent with baseline enterprise behavior';
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1500);
+    const timeoutId = setTimeout(() => controller.abort(), 1200);
 
     const mlPayload = {
-      userId: params.userId || params.user_id,
-      network: params.network ?? 'office',
-      location: params.location ?? 'office',
-      deviceTrust: params.deviceTrust ?? params.device ?? 'trusted',
-      resourceSensitivity: params.resourceSensitivity ?? 'low',
-      timeOfDay: params.timeOfDay ?? 'normal',
-      hour: params.hour ?? (params.timeOfDay === 'night' ? 2 : undefined),
+      userId: options.userId || options.user_id || 'default',
+      network: options.network || 'corporate',
+      location: options.location || 'office',
+      deviceTrust: options.deviceTrust || options.device || 'trusted',
+      resourceSensitivity: options.resourceSensitivity || options.sensitivity || 'LOW',
+      action: options.action || (evaluationType === 'LOGIN' ? 'VIEW' : 'VIEW'),
+      timeOfDay: options.timeOfDay || 'normal',
+      hour: options.hour,
+      request_frequency: options.request_frequency ?? (options.requestSpike ? 65 : undefined),
+      failed_request_count: options.failed_request_count,
+      download_frequency: options.download_frequency,
+      export_frequency: options.export_frequency,
+      restricted_website_attempts: options.restricted_website_attempts,
     };
 
     const response = await fetch(ML_SERVICE_URL, {
@@ -174,29 +137,46 @@ export async function calculateRiskAsync(evaluationTypeOrParams, paramsObj) {
     if (response.ok) {
       const data = await response.json();
       anomalyScore = Number(data.anomalyScore) || 0;
+      aiLevel = data.level || 'NORMAL';
+      aiExplanation = data.explanation || aiExplanation;
     }
   } catch (_) {
-    // Graceful fallback if ML service is unreachable
-    anomalyScore = 0;
+    // Fallback heuristic if ML service unavailable
+    if (options.requestSpike || options.request_frequency >= 40) {
+      anomalyScore = 75;
+      aiLevel = 'CRITICAL';
+      aiExplanation = 'Simulated behavioral anomaly: request spike detected';
+    } else if (options.restricted_website_attempts >= 1) {
+      anomalyScore = 48;
+      aiLevel = 'ELEVATED';
+      aiExplanation = 'Simulated behavioral anomaly: restricted destination probe';
+    }
   }
 
-  const anomalyPoints = Math.min(30, Math.round(anomalyScore * 30));
-  const finalScore = Math.min(100, baseResult.score + anomalyPoints);
-  const finalBand = scoreToBand(finalScore);
+  // Weight AI Anomaly into final risk score (0 to 30 points contribution)
+  const aiPoints = Math.round((anomalyScore / 100) * 28);
+  const finalScore = Math.min(100, baseResult.score + aiPoints);
+  const finalLevel = scoreToBand(finalScore);
 
-  const finalFactors = [
-    ...baseResult.factors,
-    {
-      name: 'behaviorAnomaly',
-      value: String(anomalyScore.toFixed(2)),
-      points: anomalyPoints,
-    },
-  ];
+  const finalFactors = [...baseResult.factors];
+  if (anomalyScore > 20) {
+    finalFactors.push({
+      name: 'AI Anomaly Detection',
+      value: `${anomalyScore}/100 (${aiLevel})`,
+      points: aiPoints,
+    });
+  }
 
   return {
     score: finalScore,
-    band: finalBand,
+    riskScore: finalScore,
+    level: finalLevel,
+    riskLevel: finalLevel,
+    band: finalLevel,
     factors: finalFactors,
+    anomalyScore,
+    aiLevel,
+    aiExplanation,
   };
 }
 

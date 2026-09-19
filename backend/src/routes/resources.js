@@ -4,45 +4,70 @@ import { query } from '../db/index.js';
 
 const router = express.Router();
 
-const ROLE_HIERARCHY = {
-  employee: ['employee'],
-  manager: ['employee', 'manager'],
-  hr: ['employee', 'manager'],
-  soc: ['employee', 'manager', 'admin'],
-  admin: ['employee', 'manager', 'admin'],
-};
-
-// GET /resources - returns entitled resources based on user's role hierarchy
+// GET /resources or /api/resources
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const userRole = req.user?.role;
-    const allowedRoles = ROLE_HIERARCHY[userRole] || [];
+    const userRole = String(req.user?.role || 'EMPLOYEE').toUpperCase();
 
-    if (allowedRoles.length === 0) {
-      return res.json([]);
-    }
-
-    const placeholders = allowedRoles.map((_, idx) => `$${idx + 1}`).join(', ');
     const sql = `
-      SELECT id, name, sensitivity
+      SELECT id, name, description, sensitivity, allowed_roles as "allowedRoles", actions, status
       FROM resources
-      WHERE min_role IN (${placeholders})
-      ORDER BY name ASC
+      ORDER BY
+        CASE sensitivity
+          WHEN 'LOW' THEN 1
+          WHEN 'MEDIUM' THEN 2
+          WHEN 'HIGH' THEN 3
+          WHEN 'CRITICAL' THEN 4
+          ELSE 5
+        END ASC,
+        name ASC
     `;
 
-    const result = await query(sql, allowedRoles);
+    const result = await query(sql);
 
-    // Return only { id, name, sensitivity }, strictly preventing any leakage of min_role
-    const resources = result.rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      sensitivity: row.sensitivity,
-    }));
+    // Map and optionally flag entitlement
+    const resources = result.rows.map((r) => {
+      const allowedRoles = Array.isArray(r.allowedRoles) ? r.allowedRoles : ['EMPLOYEE', 'MANAGER', 'IT_ADMINISTRATOR'];
+      const isEntitled = allowedRoles.includes(userRole) || userRole === 'IT_ADMINISTRATOR';
+
+      return {
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        sensitivity: r.sensitivity,
+        allowedRoles,
+        actions: Array.isArray(r.actions) ? r.actions : ['VIEW'],
+        status: r.status,
+        isEntitled,
+      };
+    });
 
     return res.json(resources);
   } catch (err) {
     console.error('Error fetching resources:', err);
-    return res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Failed to fetch resources' });
+  }
+});
+
+// GET /resources/:id or /api/resources/:id
+router.get('/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await query(
+      `SELECT id, name, description, sensitivity, allowed_roles as "allowedRoles", actions, status
+       FROM resources
+       WHERE id = $1 OR name = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Resource not found' });
+    }
+
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error fetching single resource:', err);
+    return res.status(500).json({ error: 'Failed to fetch resource' });
   }
 });
 

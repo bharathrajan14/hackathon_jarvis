@@ -14,7 +14,8 @@
     "express": "^4.21.0",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.13.0",
-    "pg-mem": "^3.0.14"
+    "pg-mem": "^3.0.14",
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.7"
