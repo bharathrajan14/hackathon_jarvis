@@ -1,0 +1,29 @@
+services:
+  # 1. Express Backend Web Service
+  - type: web
+    name: proto-jarvis-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ML_SERVICE_URL
+        sync: false
+
+  # 2. Python FastAPI ML Anomaly Service
+  - type: web
+    name: proto-jarvis-ml
+    runtime: python
+    plan: free
+    rootDir: ml-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
