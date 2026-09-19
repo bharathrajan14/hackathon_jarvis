@@ -1,8 +1,7 @@
 import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { query } from '../db/index.js';
-import { calculateRisk } from '../logic/riskEngine.js';
-import { decideAction } from '../logic/policyEngine.js';
+import { reevaluateSession } from '../logic/reevaluateSession.js';
 
 const router = express.Router();
 
@@ -62,46 +61,37 @@ router.post('/request', requireAuth, async (req, res) => {
       });
     }
 
-    // 1. Calculate Risk with resolved context
-    const riskResult = calculateRisk({
+    // Resolve active session ID from token, request body, or recent session
+    let sessionId = req.user.sessionId || req.body.sessionId || req.headers['x-session-id'] || null;
+    if (!sessionId) {
+      const sessionRes = await query(
+        `SELECT id FROM sessions WHERE user_id = $1 ORDER BY started_at DESC LIMIT 1`,
+        [req.user.id]
+      );
+      sessionId = sessionRes.rows[0]?.id || null;
+    }
+
+    // Call reevaluateSession to re-evaluate risk, update session, enforce action, and write security_events
+    const evalResult = await reevaluateSession(sessionId, 'ACCESS_REQUEST', {
+      userId: req.user.id,
+      role: req.user.role,
+      resourceId: resource.id,
+      resourceSensitivity: resource.sensitivity,
       network,
       location,
       deviceTrust: device.trust_level,
-      resourceSensitivity: resource.sensitivity,
+      deviceId: device.id,
     });
 
-    // 2. Decide Policy Action based on riskBand, user role, and resource sensitivity
-    const action = decideAction({
-      riskBand: riskResult.band,
-      role: req.user.role,
-      resourceSensitivity: resource.sensitivity,
-    });
-
-    // 3. Insert audit log record into access_requests table
-    await query(
-      `INSERT INTO access_requests (
-         user_id, resource_id, device_id, network, location,
-         risk_score, risk_band, policy_action, factors_json
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [
-        req.user.id,
-        resource.id,
-        device.id,
-        network,
-        location,
-        riskResult.score,
-        riskResult.band,
-        action,
-        JSON.stringify(riskResult.factors),
-      ]
-    );
-
-    // 4. Return evaluated risk and action to the client
+    // Return evaluated risk and action to the client
     return res.json({
-      riskScore: riskResult.score,
-      riskBand: riskResult.band,
-      factors: riskResult.factors,
-      action,
+      riskScore: evalResult.riskScore,
+      riskBand: evalResult.riskBand,
+      factors: evalResult.factors,
+      action: evalResult.action,
+      session: evalResult.session,
+      sessionStatus: evalResult.session?.status,
+      currentRisk: evalResult.session?.current_risk,
       network,
       location,
       deviceTrust: device.trust_level,

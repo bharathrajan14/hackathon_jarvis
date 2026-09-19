@@ -4,21 +4,35 @@ import { query } from '../db/index.js';
 
 const router = express.Router();
 
-// GET /audit-logs (protected, any authenticated user can view for MVP)
+// GET /audit-logs (protected, returns security_events combined with historical access_requests)
 router.get('/', requireAuth, async (req, res) => {
   try {
     const sql = `
       SELECT
         u.name AS "userName",
-        r.name AS "resourceName",
+        COALESCE(r.name, 'System') AS "resourceName",
+        se.risk_score AS "riskScore",
+        se.risk_band AS "riskBand",
+        se.policy_action AS "action",
+        se.created_at AS "createdAt"
+      FROM security_events se
+      JOIN users u ON se.user_id = u.id
+      LEFT JOIN resources r ON se.resource_id = r.id
+
+      UNION ALL
+
+      SELECT
+        u.name AS "userName",
+        COALESCE(r.name, 'System') AS "resourceName",
         ar.risk_score AS "riskScore",
         ar.risk_band AS "riskBand",
         ar.policy_action AS "action",
         ar.created_at AS "createdAt"
       FROM access_requests ar
       JOIN users u ON ar.user_id = u.id
-      JOIN resources r ON ar.resource_id = r.id
-      ORDER BY ar.created_at DESC
+      LEFT JOIN resources r ON ar.resource_id = r.id
+
+      ORDER BY "createdAt" DESC
     `;
 
     const result = await query(sql);

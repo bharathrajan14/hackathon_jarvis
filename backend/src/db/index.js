@@ -48,7 +48,7 @@ export const initDb = async () => {
     });
 
     try {
-      db.public.none("CREATE TYPE user_role AS ENUM ('employee', 'manager', 'admin');");
+      db.public.none("CREATE TYPE user_role AS ENUM ('employee', 'manager', 'admin', 'hr', 'soc');");
     } catch (_) {}
 
     try {
@@ -57,6 +57,14 @@ export const initDb = async () => {
 
     try {
       db.public.none("CREATE TYPE device_trust_level AS ENUM ('trusted', 'unknown', 'untrusted');");
+    } catch (_) {}
+
+    try {
+      db.public.none("CREATE TYPE session_status AS ENUM ('ACTIVE', 'MFA_REQUIRED', 'RESTRICTED', 'SUSPENDED');");
+    } catch (_) {}
+
+    try {
+      db.public.none("CREATE TYPE approval_status AS ENUM ('PENDING', 'APPROVED', 'REJECTED');");
     } catch (_) {}
 
     db.public.none(`
@@ -104,6 +112,56 @@ export const initDb = async () => {
         policy_action TEXT NOT NULL,
         factors_json JSONB NOT NULL,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
+    db.public.none(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status session_status NOT NULL,
+        current_risk INTEGER NOT NULL DEFAULT 0,
+        started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        last_evaluated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
+    db.public.none(`
+      CREATE TABLE IF NOT EXISTS security_events (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_id UUID REFERENCES sessions(id) ON DELETE SET NULL,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        resource_id UUID REFERENCES resources(id) ON DELETE SET NULL,
+        risk_score INTEGER NOT NULL,
+        risk_band TEXT NOT NULL,
+        policy_action TEXT NOT NULL,
+        factors_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+        evidence_json JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
+    db.public.none(`
+      CREATE TABLE IF NOT EXISTS mfa_challenges (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        otp_code TEXT NOT NULL,
+        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        verified BOOLEAN NOT NULL DEFAULT false
+      );
+    `);
+
+    db.public.none(`
+      CREATE TABLE IF NOT EXISTS approval_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_id UUID REFERENCES sessions(id) ON DELETE SET NULL,
+        requested_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        action_description TEXT NOT NULL,
+        status approval_status NOT NULL DEFAULT 'PENDING',
+        reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        resolved_at TIMESTAMP WITH TIME ZONE
       );
     `);
 

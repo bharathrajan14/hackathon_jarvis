@@ -6,6 +6,8 @@ import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Decision from './pages/Decision.jsx';
 import AuditLogs from './pages/AuditLogs.jsx';
+import ApprovalCenter from './pages/ApprovalCenter.jsx';
+import SocDashboard from './pages/SocDashboard.jsx';
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth();
@@ -61,6 +63,22 @@ function AppRoutes() {
             element={
               <ProtectedRoute>
                 <Decision />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/approvals"
+            element={
+              <ProtectedRoute>
+                <ApprovalCenter />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/soc"
+            element={
+              <ProtectedRoute>
+                <SocDashboard />
               </ProtectedRoute>
             }
           />

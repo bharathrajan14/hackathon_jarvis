@@ -25,9 +25,10 @@ export async function apiFetch(endpoint, options = {}) {
   }
 
   if (!response.ok) {
-    if (response.status === 401 && !endpoint.includes('/login') && !endpoint.includes('/register')) {
+    if (response.status === 401 && !endpoint.includes('/login') && !endpoint.includes('/register') && !endpoint.includes('/mfa/verify')) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
+      localStorage.removeItem('sessionId');
       window.location.href = '/login';
     }
     const errorMsg = data?.error || data?.message || `Request failed with status ${response.status}`;
@@ -41,9 +42,21 @@ export async function apiFetch(endpoint, options = {}) {
 }
 
 export const api = {
-  login: (email, password) => apiFetch('/auth/login', {
+  login: (email, password, context = {}) => apiFetch('/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({
+      email,
+      password,
+      network: context.network || 'office',
+      location: context.location || 'office',
+      deviceTrust: context.deviceTrust || 'trusted',
+      timeOfDay: context.timeOfDay || 'normal',
+    }),
+  }),
+
+  verifyMfa: (sessionId, otpCode) => apiFetch('/auth/mfa/verify', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, otpCode }),
   }),
 
   register: (name, email, password, role) => apiFetch('/auth/register', {
@@ -60,13 +73,46 @@ export const api = {
     body: JSON.stringify({ fingerprint }),
   }),
 
-  requestAccess: (resourceId, network, location, deviceId) => apiFetch('/access/request', {
+  requestAccess: (resourceId, network, location, deviceId, sessionId) => apiFetch('/access/request', {
     method: 'POST',
-    body: JSON.stringify({ resourceId, network, location, deviceId }),
+    body: JSON.stringify({ resourceId, network, location, deviceId, sessionId }),
   }),
 
   getAuditLogs: () => apiFetch('/audit-logs', {
     method: 'GET',
+  }),
+
+  // Approval Center
+  submitSensitiveAction: (sessionId, actionDescription) => apiFetch('/actions/sensitive', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, actionDescription }),
+  }),
+
+  getPendingApprovals: () => apiFetch('/approvals/pending', {
+    method: 'GET',
+  }),
+
+  decideApproval: (id, decision) => apiFetch(`/approvals/${id}/decision`, {
+    method: 'POST',
+    body: JSON.stringify({ decision }),
+  }),
+
+  // SOC Dashboard & Copilot
+  getSocEvents: (params = {}) => {
+    const queryParts = [];
+    if (params.userId) queryParts.push(`userId=${encodeURIComponent(params.userId)}`);
+    if (params.eventType) queryParts.push(`eventType=${encodeURIComponent(params.eventType)}`);
+    const qs = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
+    return apiFetch(`/soc/events${qs}`, { method: 'GET' });
+  },
+
+  getSocSession: (sessionId) => apiFetch(`/soc/sessions/${sessionId}`, {
+    method: 'GET',
+  }),
+
+  explainWithCopilot: (sessionId) => apiFetch('/copilot/explain', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId }),
   }),
 };
 

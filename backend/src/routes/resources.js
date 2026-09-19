@@ -7,6 +7,8 @@ const router = express.Router();
 const ROLE_HIERARCHY = {
   employee: ['employee'],
   manager: ['employee', 'manager'],
+  hr: ['employee', 'manager'],
+  soc: ['employee', 'manager', 'admin'],
   admin: ['employee', 'manager', 'admin'],
 };
 
